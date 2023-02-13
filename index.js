@@ -4,6 +4,8 @@ const cors = require('cors');
 
 app.use(cors()); // middleware for cross origin resource sharing(CORS)
 
+app.use(express.static("build")); // middleware for deploying static build
+
 app.use(express.json()); // middleware for parsing json (json parser)
 
 const requestLogger = (req, res, next) => {

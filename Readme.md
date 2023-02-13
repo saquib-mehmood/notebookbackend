@@ -266,3 +266,95 @@ GET http://localhost:8080/yes
 
 => 404 Not found
 {"error":"unknown endpoint"}
+
+## Deploying Application to the Internet
+
+### Install and Deploy CORS
+
+In order to enable legitimate cross-origin requests (requests to URLs that don't share the same origin) we us a mechanism called CORS(Cross-Origin Resource Sharing).
+
+By default, the JavaScript code of an application that runs in a browser can only communicate with a server in the same origin. Because our server is in localhost port 8080, while our frontend is in localhost port 3000, they do not have the same origin.
+
+We can allow requests from other origins by using Node's cors middleware.
+
+In your backend repository, install cors with the command:
+
+npm install cors
+
+take the middleware to use and allow for requests from all origins:
+
+const cors = require('cors')
+
+app.use(cors())
+
+Aftet this the front-end will be connected to the backend. The react app running in the browser now fetches the data from node/express-server that runs in localhost:8080. But because there is yet not a database connected to the app, the POST and PUT requests cannot be implemented yet.
+
+### Deploying to the Internet
+
+We will consider two services Fly.io and Render that both have a (limited) free plan. There are also some other free options hosting options that work well like Railway, Cyclic, Replit and Code Sandbox.
+we need to change the definition of the port our application uses at the bottom of the index.js file like so:
+
+const PORT = process.env.PORT || 8080
+
+Now we are using the port defined in the environment variable PORT or port 8080 if the environment variable PORT is undefined. Fly.io and Render configure the application port based on that environment variable.
+
+Presently, we will deploy the app to Render.
+
+sign in is to be made with a GitHub account.
+
+After signing in, we create a new "web service".
+
+Push the backend code to github and connect the repo to render.
+
+The connecting seem to require that the app reopository is public.
+
+Next we will define the basic configurations. If the app is not at the root of the repository the Root directory needs to be given a proper value. After this, the app starts up in the Render. The dashboard tells us the app state and the url where the app is running.
+
+Every commit to GitHub should redeploy the app. It is also possible to manually redeploy the app. Also the app logs can be seen in the dashboard. We notice now from the logs that the app has been started in the port 10000. The app code gets the right port through the environment variable PORT so it is essential that the file index.js has been updated as such.
+
+### Frontend Production Build
+
+So far we have been running React code in development mode. In development mode the application is configured to give clear error messages, immediately render code changes to the browser, and so on.
+
+When the application is deployed, we must create a production build or a version of the application which is optimized for production.
+
+A production build of applications created with create-react-app can be created with the command:
+npm run build
+
+This creates a directory called build (which contains the only HTML file of our application, index.html ) which contains the directory static. Minified version of our application's JavaScript code will be generated in the static directory. Even though the application code is in multiple files, all of the JavaScript will be minified into one file. All of the code from all of the application's dependencies will also be minified into this single file.
+
+### Serving Static Files from the Backend
+
+One option for deploying the frontend is to copy the production build (the build directory) to the root of the backend repository and configure the backend to show the frontend's main page (the file build/index.html) as its main page.
+
+We begin by copying the production build of the frontend to the root of the backend. With a Mac or Linux computer, the copying can be done from the frontend directory with the command:
+
+cp -r build ../notebookbackend
+
+whenever express gets an HTTP GET request it will first check if the build directory contains a file corresponding to the request's address. If a correct file is found, express will return it.
+
+Now HTTP GET requests to the address www.serversaddress.com/index.html or www.serversaddress.com will show the React frontend. GET requests to the address www.serversaddress.com/api/notes will be handled by the backend's code.
+
+Because of our situation, both the frontend and the backend are at the same address, we can declare baseUrl as a relative URL. This means we can leave out the part declaring the server.
+
+In the services/notes.js file change the following:
+
+const baseUrl = '/api/notes'
+
+After the change, we have to create a new production build and copy it to the root of the backend repository.
+
+The application can now be used from the backend address http://localhost:8080:
+
+When we use a browser to go to the address http://localhost:3001, the server returns the index.html file from the build repository.
+
+The file contains instructions to fetch a CSS stylesheet defining the styles of the application, and two script tags that instruct the browser to fetch the JavaScript code of the application - the actual React application.
+
+The React code fetches notes from the server address http://localhost:8080/api/notes and renders them to the screen. The communications between the server and the browser can be seen in the Network tab of the developer console.
+
+Unlike when running the app in a development environment, everything is now in the same node/express-backend that runs in localhost:8080. When the browser goes to the page, the file index.html is rendered. That causes the browser to fetch the product version of the React app. Once it starts to run, it fetches the json-data from the address localhost:8080/api/notes.
+
+### Deploying Complete App
+
+After ensuring that the production version of the application works locally, commit the production build of the frontend to the backend repository, and push the code to GitHub again.
+
+If you are using Render a push to GitHub might be enough. If the automatic deployment does not work, select the "manual deploy" from the Render dashboard.
