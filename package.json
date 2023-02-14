@@ -6,13 +6,17 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:ui": "shx rm -rf build && cd ../reactnotebook && npm run build && cp -r build ../notebookbackend",
+    "deploy:full": "shx npm run build:ui && git add . && git commit -m uibuild && git push"
   },
   "author": "Saquib Mehmood",
   "license": "MIT",
   "dependencies": {
     "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
     "express": "^4.18.2",
+    "mongoose": "^6.9.1",
     "nodemon": "^2.0.20"
   }
 }

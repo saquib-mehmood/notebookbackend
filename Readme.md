@@ -358,3 +358,468 @@ Unlike when running the app in a development environment, everything is now in t
 After ensuring that the production version of the application works locally, commit the production build of the frontend to the backend repository, and push the code to GitHub again.
 
 If you are using Render a push to GitHub might be enough. If the automatic deployment does not work, select the "manual deploy" from the Render dashboard.
+
+### Streamlining Frontend
+
+To create a new production build of the frontend without extra manual work, we will add some npm-scripts to the package.json of the backend repository.
+
+In case of render add following scripts:
+
+{
+"scripts": {
+//...
+"build:ui": "rm -rf build && cd ../reactnotebook && npm run build && cp -r build ../notebookbackend",
+"deploy:full": "npm run build:ui && git add . && git commit -m uibuild && git push"
+}
+}
+
+The script npm run build:ui builds the frontend and copies the production version under the backend repository. npm run deploy:full contains also the necessary git commands to update the backend repository.
+
+NB On Windows, npm scripts are executed in cmd.exe as the default shell which does not support bash commands. For the above bash commands to work, you can change the default shell to Bash (in the default Git for Windows installation) as follows:
+
+npm config set script-shell "C:\\Program Files\\Git\\bin\\bash.exe"
+
+Another option is the use of shx.
+
+### Proxy
+
+Changes on the frontend have caused it to no longer work in development mode (when started with command npm start), as the connection to the backend does not work.
+
+This is due to changing the backend address to a relative URL:
+
+const baseUrl = '/api/notes'
+
+Because in development mode the frontend is at the address localhost:3000, the requests to the backend go to the wrong address localhost:3000/api/notes. The backend is at localhost:8080.
+
+If the project was created with create-react-app, this problem is easy to solve. It is enough to add the following declaration to the package.json file of the frontend repository.
+
+"scripts": {
+// ...
+},
+"proxy": "http://localhost:8080"
+}
+
+After a restart, the React development environment will work as a proxy. If the React code does an HTTP request to a server address at http://localhost:3000 not managed by the React application itself (i.e. when requests are not about fetching the CSS or JavaScript of the application), the request will be redirected to the server at http://localhost:3001.
+
+Now the frontend is also fine, working with the server both in development- and production mode.
+
+### Connecting Backend to the
+
+To store our saved notes indefinitely, we need a database.
+We will use MongoDB which is a so-called document database. The reason for using Mongo as the database is its lower complexity compared to a relational database.
+We can install and run MongoDB on our computer. However, the internet is also full of Mongo database services that we can use. Our preferred MongoDB provider is MongoDB Atlas. After creating the cluster and setting IP address to "anywhere" we connect our application. The database generates a URI for connection, which we add to our applicaiton.
+
+We will use the Mongoose library that offers a higher-level API. Mongoose could be described as an object document mapper (ODM), and saving JavaScript objects as Mongo documents is straightforward with this library.
+
+npm install mongoose
+
+In order to check the functionality of the database connection we will create a practice app mongo.js as follows:
+
+const mongoose = require('mongoose');
+
+if (process.argv.length < 3) {
+console.log('give password as argument')
+process.exit(1)
+};
+
+const password = process.argv[2];
+
+const url = `mongodb+srv://saquibmehmood:${password}@cluster0.30blbfb.mongodb.net/noteApp?retryWrites=true&w=majority`
+
+mongoose.set('strictQuery', false);
+mongoose.connect(url);
+
+const noteSchema = new mongoose.Schema ({
+content: String,
+important: Boolean,
+date: { type: Date, default: Date.now },
+});
+
+const Note = mongoose.model('Note', noteSchema);
+
+const note = new Note({
+content: 'Mongoose makes life much easier',
+important: true,
+});
+
+note.save().then(result => {
+console.log('note saved!')
+mongoose.connection.close()
+})
+
+// Note.find({}).then(result => {
+// result.forEach(note => {
+// console.log(note)
+// })
+// mongoose.connection.close()
+// })
+
+The code also assumes that it will be passed the password from the credentials we created in MongoDB Atlas, as a command line parameter. We can access the command line parameter like this:
+
+const password = process.argv[2]
+
+When the code is run with the command node mongo.js password, Mongo will add a new document to the database.
+
+Following code fetches objects from the database:
+
+Note.find({}).then(result => {
+result.forEach(note => {
+console.log(note)
+})
+mongoose.connection.close()
+})
+
+he objects are retrieved from the database with the find method of the Note model. The parameter of the method is an object expressing search conditions. Since the parameter is an empty object{}, we get all of the notes stored in the notes collection.
+
+The search conditions adhere to the Mongo search query syntax.
+
+We could restrict our search to only include important notes like this:
+
+Note.find({ important: true }).then(result => {
+// ...
+})
+
+We add the following code to the index.js file after setting up the database at Mongo Atlas:
+
+const mongoose = require('mongoose')
+
+// DO NOT SAVE YOUR PASSWORD TO GITHUB!!
+const url =
+`mongodb+srv://fullstack:${password}@cluster0.o1opl.mongodb.net/?retryWrites=true&w=majority`
+
+mongoose.set('strictQuery',false)
+mongoose.connect(url)
+
+const noteSchema = new mongoose.Schema({
+content: String,
+important: Boolean,
+})
+
+const Note = mongoose.model('Note', noteSchema)
+
+We also change the handler for fetching all notes to the following form:
+app.get('/api/notes', (request, response) => {
+Note.find({}).then(notes => {
+response.json(notes)
+})
+})
+
+We can verify in the browser at localhost:8080/api/notes that the backend works for displaying all of the documents:
+
+[{"_id":"63eab2428002710665a7c413","content":"HTML is easy","important":true,"date":"2023-02-13T21:57:22.209Z","__v":0},{"_id":"63eab26c51801ecc001e25ed","content":"CSS is hard","important":true,"date":"2023-02-13T21:58:04.063Z","__v":0},{"_id":"63eab2989b898e4e306bf4a4","content":"Mongoose makes life much easier","important":true,"date":"2023-02-13T21:58:48.481Z","__v":0}]
+
+However, there are certain problems in the output which we do not want.
+The frontend assumes that every object has a unique id string in the id field, which is actually not a string but an object. We also don't want to return the mongo versioning field \_\_v to the frontend.
+
+To format the objects returned by Mongoose we have to modify the toJSON method of the schema, which is used on all instances of the models produced with that schema.
+To modify the method we need to change the configurable options of the schema, options can be changed using the set method of the schema.
+see https://mongoosejs.com/docs/api.html#transform for more info on the transform function.
+
+noteSchema.set('toJSON', {
+transform: (document, returnedObject) => {
+returnedObject.id = returnedObject.\_id.toString()
+delete returnedObject.\_id
+delete returnedObject.\_\_v
+}
+})
+
+### Configure Database into its Own Module
+
+We will create a new directory for the module called models, and add a file called note.js:
+
+const mongoose = require('mongoose');
+
+// Do not save your password to Github
+
+const url = process.env.MONGODB_URI
+
+// const url = `mongodb+srv://saquibmehmood:${'dl00457799'}@cluster0.30blbfb.mongodb.net/noteApp?retryWrites=true&w=majority`
+mongoose.set("strictQuery", false);
+mongoose.connect(url)
+.then(result => {
+console.log("connected to MongoDB")
+})
+.catch((error) => {
+console.log("error connecting to MongoDB: ", error.message)
+})
+
+const noteSchema = new mongoose.Schema ({
+content: String,
+important: Boolean,
+date: { type: Date, default: new Date()},
+});
+
+// format \_id and **v properties of returned object
+noteSchema.set('toJSON', {
+transform: (document, returnedObject) => {
+returnedObject.id = returnedObject.\_id.toString()
+delete returnedObject.\_id
+delete returnedObject.**v
+}
+})
+
+module.exports = mongoose.model('Note', noteSchema);
+
+The public interface of the module is defined by setting a value to the module.exports variable. We will set the value to be the Note model. The other things defined inside of the module, like the variables mongoose and url will not be accessible or visible to users of the module.
+
+Importing the module happens by adding the following line to index.js:
+const Note = require('./models/note')
+
+This way the Note variable will be assigned to the same object that the module defines.
+
+It's not a good idea to hardcode the address of the database into the code, so instead the address of the database is passed to the application via the MONGODB_URI environment variable.
+
+The method for establishing the connection is now given functions for dealing with a successful and unsuccessful connection attempt. Both functions just log a message to the console about the success status.
+
+There are many ways to define the value of an environment variable. One way would be to define it when the application is started:
+
+MONGODB_URI=address_here npm run dev
+
+However, we will use the dotenv library. You can install the library with the command:
+
+npm install dotenv;
+
+To use the library, we create a .env file at the root of the project. The environment variables are defined inside of the file, and it can look like this:
+
+MONGODB_URI=mongodb+srv://fullstack:<password>@cluster0.o1opl.mongodb.net/noteApp?retryWrites=true&w=majority
+PORT=8080
+
+The .env file should be gitignored right away since we do not want to publish any confidential information publicly online!
+
+The environment variables defined in the .env file can be taken into use with the expression require('dotenv').config() and you can reference them in your code just like you would reference normal environment variables, with the familiar process.env.MONGODB_URI syntax.
+
+Let's change the index.js file in the following way:
+
+require('dotenv').config()
+const express = require('express')
+const app = express()
+const Note = require('./models/note')
+
+// ..
+
+const PORT = process.env.PORT
+app.listen(PORT, () => {
+console.log(`Server running on port ${PORT}`)
+})
+
+It's important that dotenv gets imported before the note model is imported. This ensures that the environment variables from the .env file are available globally before the code from the other modules is imported.
+
+When using Render, the database url is given by defining the proper env in the dashboard.
+
+### Using Database in Route Handlers
+
+change the rest of the backend functionality to use the database.
+
+Creating a new note is accomplished like this:
+
+app.post('/api/notes', (request, response) => {
+const body = request.body
+
+if (body.content === undefined) {
+return response.status(400).json({ error: 'content missing' })
+}
+
+const note = new Note({
+content: body.content,
+important: body.important || false,
+})
+
+note.save().then(savedNote => {
+response.json(savedNote)
+})
+})
+
+The note objects are created with the Note constructor function. The response is sent inside of the callback function for the save operation. This ensures that the response is sent only if the operation succeeded.
+
+const note = new Note({
+content: body.content,
+important: body.important || false,
+})
+
+note.save().then(savedNote => {
+response.json(savedNote)
+})
+})
+
+The savedNote parameter in the callback function is the saved and newly created note. The data sent back in the response is the formatted version created automatically with the toJSON method:
+
+response.json(savedNote)
+
+Using Mongoose's findById method, fetching an individual note gets changed into the following:
+
+### Deleting a Note
+
+The easiest way to delete a note from the database is with the findByIdAndRemove method:
+
+app.delete('/api/notes/:id', (request, response, next) => {
+Note.findByIdAndRemove(request.params.id)
+.then(result => {
+response.status(204).end()
+})
+.catch(error => next(error))
+})
+
+In both of the "successful" cases of deleting a resource, the backend responds with the status code 204 no content. The two different cases are deleting a note that exists, and deleting a note that does not exist in the database. The result callback parameter could be used for checking if a resource was actually deleted, and we could use that information for returning different status codes for the two cases if we deemed it necessary. Any exception that occurs is passed onto the error handler.
+
+### Toggling Importance of a Note
+
+The toggling of the importance of a note can be easily accomplished with the findByIdAndUpdate method.
+
+app.put('/api/notes/:id', (request, response, next) => {
+const body = request.body
+
+const note = {
+content: body.content,
+important: body.important,
+}
+
+Note.findByIdAndUpdate(request.params.id, note, { new: true })
+.then(updatedNote => {
+response.json(updatedNote)
+})
+.catch(error => next(error))
+})
+
+n the code above, we also allow the content of the note to be edited.
+
+Notice that the findByIdAndUpdate method receives a regular JavaScript object as its parameter, and not a new note object created with the Note constructor function.
+
+There is one important detail regarding the use of the findByIdAndUpdate method. By default, the updatedNote parameter of the event handler receives the original document without the modifications. We added the optional { new: true }parameter, which will cause our event handler to be called with the new modified document instead of the original.
+
+After testing the backend directly with Postman and the VS Code REST client, we can verify that it seems to work. The frontend also appears to work with the backend using the database.
+
+### Error Handling
+
+If no matching object is found in the database, the value of note will be null and the else block is executed. This results in a response with the status code 404 not found. If a promise returned by the findById method is rejected, the response will have the status code 500 internal server error. The console displays more detailed information about the error.
+
+On top of the non-existing note, there's one more error situation that needs to be handled. In this situation, we are trying to fetch a note with the wrong kind of id, meaning an id that doesn't match the mongo identifier format.
+
+If we make the following request, we will get the error message shown below:
+
+Method: GET
+Path: /api/notes/someInvalidId
+Body: {}
+
+---
+
+{ CastError: Cast to ObjectId failed for value "someInvalidId" at path "\_id"
+at CastError (/Users/mluukkai/opetus/\_fullstack/osa3-muisiinpanot/node_modules/mongoose/lib/error/cast.js:27:11)
+at ObjectId.cast (/Users/mluukkai/opetus/\_fullstack/osa3-muisiinpanot/node_modules/mongoose/lib/schema/objectid.js:158:13)
+...
+
+Given a malformed id as an argument, the findById method will throw an error causing the returned promise to be rejected. This will cause the callback function defined in the catch block to be called.
+
+Let's make some small adjustments to the response in the catch block:
+app.get('/api/notes/:id', (request, response) => {
+Note.findById(request.params.id)
+.then(note => {
+if (note) {
+response.json(note)
+} else {
+response.status(404).end()
+}
+})
+.catch(error => {
+console.log(error)
+response.status(400).send({ error: 'malformatted id' })
+})
+})
+
+### Moving Error Handling into Middleware
+
+We have written the code for the error handler among the rest of our code. This can be a reasonable solution at times, but there are cases where it is better to implement all error handling in a single place. This can be particularly useful if we want to report data related to errors to an external error-tracking system like Sentry.
+
+Let's change the handler for the /api/notes/:id route so that it passes the error forward with the next function. The next function is passed to the handler as the third parameter:
+
+app.get('/api/notes/:id', (request, response, next) => {
+Note.findById(request.params.id)
+.then(note => {
+if (note) {
+response.json(note)
+} else {
+response.status(404).end()
+}
+})
+.catch(error => next(error))
+})
+
+The error that is passed forwards is given to the next function as a parameter. If next was called without a parameter, then the execution would simply move onto the next route or middleware. If the next function is called with a parameter, then the execution will continue to the error handler middleware.
+
+Express error handlers are middleware that are defined with a function that accepts four parameters. Our error handler looks like this:
+
+const errorHandler = (error, request, response, next) => {
+console.error(error.message)
+
+if (error.name === 'CastError') {
+return response.status(400).send({ error: 'malformatted id' })
+}
+
+next(error)
+}
+
+// this has to be the last loaded middleware.
+app.use(errorHandler)
+
+The error handler checks if the error is a CastError exception, in which case we know that the error was caused by an invalid object id for Mongo. In this situation, the error handler will send a response to the browser with the response object passed as a parameter. In all other error situations, the middleware passes the error forward to the default Express error handler.
+
+Note that the error-handling middleware has to be the last loaded middleware!
+
+### Order of Middleware Loading
+
+The execution order of middleware is the same as the order that they are loaded into express with the app.use function. For this reason, it is important to be careful when defining middleware.
+
+The correct order is the following:
+
+````app.use(express.static('build'))
+app.use(express.json())
+app.use(requestLogger)
+
+app.post('/api/notes', (request, response) => {
+  const body = request.body
+  // ...
+})
+
+const unknownEndpoint = (request, response) => {
+  response.status(404).send({ error: 'unknown endpoint' })
+}
+
+// handler of requests with unknown endpoint
+app.use(unknownEndpoint)
+
+const errorHandler = (error, request, response, next) => {
+  // ...
+}
+
+// handler of requests with result to errors
+app.use(errorHandler) ```
+````
+
+## Validation and ESLint
+There are usually constraints that we want to apply to the data that is stored in our application's database. Our application shouldn't accept notes that have a missing or empty content property. The validity of the note is checked in the route handler:
+
+app.post('/api/notes', (request, response) => {
+  const body = request.body
+  if (body.content === undefined) {
+    return response.status(400).json({ error: 'content missing' })
+  }
+
+  // ...
+})
+
+If the note does not have the content property, we respond to the request with the status code 400 bad request.
+
+One smarter way of validating the format of the data before it is stored in the database is to use the validation functionality available in Mongoose.
+
+We can define specific validation rules for each field in the schema:
+
+const noteSchema = new mongoose.Schema({
+  content: {
+    type: String,
+    minLength: 5,
+    required: true
+  },
+  important: Boolean,
+  date: { type: Date, default: new Date()},
+})
+
+The minLength and required validators are built-in and provided by Mongoose. The Mongoose custom validator functionality allows us to create new validators if none of the built-in ones cover our needs.
