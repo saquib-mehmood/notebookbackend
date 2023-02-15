@@ -795,15 +795,16 @@ app.use(errorHandler) ```
 ````
 
 ## Validation and ESLint
+
 There are usually constraints that we want to apply to the data that is stored in our application's database. Our application shouldn't accept notes that have a missing or empty content property. The validity of the note is checked in the route handler:
 
 app.post('/api/notes', (request, response) => {
-  const body = request.body
-  if (body.content === undefined) {
-    return response.status(400).json({ error: 'content missing' })
-  }
+const body = request.body
+if (body.content === undefined) {
+return response.status(400).json({ error: 'content missing' })
+}
 
-  // ...
+// ...
 })
 
 If the note does not have the content property, we respond to the request with the status code 400 bad request.
@@ -813,13 +814,188 @@ One smarter way of validating the format of the data before it is stored in the 
 We can define specific validation rules for each field in the schema:
 
 const noteSchema = new mongoose.Schema({
-  content: {
-    type: String,
-    minLength: 5,
-    required: true
-  },
-  important: Boolean,
-  date: { type: Date, default: new Date()},
+content: {
+type: String,
+minLength: 5,
+required: true
+},
+important: Boolean,
+date: { type: Date, default: new Date()},
 })
 
 The minLength and required validators are built-in and provided by Mongoose. The Mongoose custom validator functionality allows us to create new validators if none of the built-in ones cover our needs.
+
+If we try to store an object in the database that breaks one of the constraints, the operation will throw an exception. Let's change our handler for creating a new note so that it passes any potential exceptions to the error handler middleware:
+
+app.post('/api/notes', (request, response, next) => {
+const body = request.body
+
+const note = new Note({
+content: body.content,
+important: body.important || false,
+date: new Date(),
+})
+
+note.save()
+.then(savedNote => {
+response.json(savedNote)
+})
+.catch(error => next(error))
+})
+
+Let's expand the error handler to deal with these validation errors:
+
+const errorHandler = (error, request, response, next) => {
+console.error(error.message)
+
+if (error.name === 'CastError') {
+return response.status(400).send({ error: 'malformatted id' })
+} else if (error.name === 'ValidationError') {
+return response.status(400).json({ error: error.message })
+}
+
+next(error)
+}
+
+Test with Postman.
+
+We notice that the backend has now a problem: validations are not done when editing a note. The documentation explains what is the problem, validations are not run by default when findOneAndUpdate is executed.
+
+The fix is easy. Let us also reformulate the route code a bit:
+
+app.put('/api/notes/:id', (request, response, next) => {
+const { content, important } = request.body
+
+Note.findByIdAndUpdate(
+request.params.id,
+{ content, important },
+{ new: true, runValidators: true, context: 'query' }
+)
+.then(updatedNote => {
+response.json(updatedNote)
+})
+.catch(error => next(error))
+})
+
+### Deploying Database Backend to Server
+
+We do not have to generate a new production build of the frontend since changes thus far were only on our backend.
+
+The environment variables defined in dotenv will only be used when the backend is not in production mode, i.e. Fly.io or Render. For production, we have to set the database URL in the service that is hosting our app. When using Render, the database url is given by definig the proper env in the dashboard. The Render Dashboard shows the server logs.
+
+### Lint
+
+Generically, lint or a linter is any tool that detects and flags errors in programming languages, including stylistic errors.
+
+In the JavaScript universe, the current leading tool for static analysis aka. "linting" is ESlint.
+
+Let's install ESlint as a development dependency to the backend project with the command.
+
+npm install eslint --save-dev
+
+After this we can initialize a default ESlint configuration with the command:
+npx eslint --init
+
+The configuration will be saved in the .eslintrc.js file:
+
+module.exports = {
+'env': {
+'commonjs': true,
+'es2021': true,
+'node': true
+},
+'extends': 'eslint:recommended',
+'parserOptions': {
+'ecmaVersion': 'latest'
+},
+'rules': {
+'indent': [
+'error',
+4
+],
+'linebreak-style': [
+'error',
+'unix'
+],
+'quotes': [
+'error',
+'single'
+],
+'semi': [
+'error',
+'never'
+]
+}
+}
+
+Let's immediately change the rule concerning indentation, so that the indentation level is two spaces.
+
+"indent": [
+"error",
+2
+],
+
+Inspecting and validating a file like index.js can be done with the following command:
+npx eslint index.js
+
+It is recommended to create a separate npm script for linting:
+
+{
+// ...
+"scripts": {
+"start": "node index.js",
+"dev": "nodemon index.js",
+// ...
+"lint": "eslint ."
+},
+// ...
+}
+
+Now the npm run lint command will check every file in the project.
+
+Also the files in the build directory get checked when the command is run. We do not want this to happen, and we can accomplish this by creating an .eslintignore file in the project's root with the following contents:
+
+build
+
+This causes the entire build directory to not be checked by ESlint.
+
+A better alternative to executing the linter from the command line is to configure a eslint-plugin to the editor, that runs the linter continuously. By using the plugin you will see errors in your code immediately.
+
+The VS Code ESlint plugin will underline style violations with a red line.
+
+This makes errors easy to spot and fix right away.
+
+ESlint has a vast array of rules that are easy to take into use by editing the .eslintrc.js file.
+
+Let's add the eqeqeq rule that warns us, if equality is checked with anything but the triple equals operator. The rule is added under the rules field in the configuration file.
+
+Let's prevent unnecessary trailing spaces at the ends of lines, let's require that there is always a space before and after curly braces, and let's also demand a consistent use of whitespaces in the function parameters of arrow functions.
+
+{
+// ...
+'rules': {
+// ...
+'eqeqeq': 'error',
+'no-trailing-spaces': 'error',
+'object-curly-spacing': [
+'error', 'always'
+],
+'arrow-spacing': [
+'error', { 'before': true, 'after': true }
+]
+},
+}
+
+Our default configuration takes a bunch of predetermined rules into use from eslint:recommended:
+
+'extends': 'eslint:recommended',
+
+This includes a rule that warns about console.log commands. Disabling a rule can be accomplished by defining its "value" as 0 in the configuration file. Let's do this for the no-console rule in the meantime.
+
+'no-console': 0
+
+NB when you make changes to the .eslintrc.js file, it is recommended to run the linter from the command line. This will verify that the configuration file is correctly formatted.
+
+If there is something wrong in your configuration file, the lint plugin can behave quite erratically.
+
+Many companies define coding standards that are enforced throughout the organization through the ESlint configuration file. It is not recommended to keep reinventing the wheel over and over again, and it can be a good idea to adopt a ready-made configuration from someone else's project into yours. Recently many projects have adopted the Airbnb Javascript style guide by taking Airbnb's ESlint configuration into use.
