@@ -1,27 +1,15 @@
-const mongoose = require('mongoose');
-
-const url = process.env.MONGODB_URI
-console.log('connecting to', url)
-
-mongoose.set("strictQuery", false);
-mongoose.connect(url)
-    .then(result => {
-        console.log("connected to MongoDB")
-    })
-    .catch((error) => {
-        console.log("error connecting to MongoDB: ", error.message)
-    })
-    
+/* eslint-disable linebreak-style */
+const mongoose = require('mongoose')
 
 const noteSchema = new mongoose.Schema ({
-    content: {
-        type: String,
-        minLength: 5,
-        required: true
-    },
-    important: Boolean,
-    date: { type: Date, default: new Date()},
-});
+  content: {
+    type: String,
+    minLength: 5,
+    required: true
+  },
+  important: Boolean,
+  date: { type: Date, default: new Date() },
+})
 
 // format _id and __v properties of returned object
 noteSchema.set('toJSON', {
@@ -32,4 +20,4 @@ noteSchema.set('toJSON', {
   }
 })
 
-module.exports = mongoose.model('Note', noteSchema);
+module.exports = mongoose.model('Note', noteSchema)

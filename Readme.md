@@ -999,3 +999,496 @@ NB when you make changes to the .eslintrc.js file, it is recommended to run the 
 If there is something wrong in your configuration file, the lint plugin can behave quite erratically.
 
 Many companies define coding standards that are enforced throughout the organization through the ESlint configuration file. It is not recommended to keep reinventing the wheel over and over again, and it can be a good idea to adopt a ready-made configuration from someone else's project into yours. Recently many projects have adopted the Airbnb Javascript style guide by taking Airbnb's ESlint configuration into use.
+
+## Refactoring the Code
+
+We need to restructure our application in accordance with Node.js best practices.
+
+The app structure is now as follows:
+
+- build
+- app.js
+- index.js
+- controllers
+- - router.js
+- models
+- - note.js
+- utils
+- - config.js
+- - logger.js
+- - middleware.js
+
+## Testing
+
+We will use the npm package jest for testing the app.
+
+npm install jest --save-dev
+
+In package.json add the following script:
+"test": "jest --verbose",
+and the following environment at the end of the file:
+"jest": {
+"testEnvironment": "node"
+}
+}
+
+Create two mock functions for unit testing by creating the file utils/for_testing.js:
+
+const reverse = (string) => {
+return string.split('')
+.reverse()
+.join('')
+}
+
+const average = (array) => {
+const reducer = (sum, item) => {
+return sum + item
+}
+return array.length === 0
+? 0
+: array.reduce(reducer, 0) / array.length
+}
+
+module.exports = { reverse, average }
+
+Create a separate folder "tests" and write following tests in file tests/average.test.js
+
+const average = require('../utils/for_testing').average
+
+describe('average', () => {
+test('of one value is the value itself', () => {
+expect(average([1])).toBe(1)
+})
+
+test('of many is calculated right', () => {
+expect(average([1, 2, 3, 4, 5, 6])).toBe(3.5)
+})
+
+test('of empty array is zero', () => {
+expect(average([])).toBe(0)
+})
+})
+
+And following tests in the file tests/reverse.js
+
+/_ eslint-disable linebreak-style _/
+const reverse = require('../utils/for_testing').reverse
+
+test('reverse of a', () => {
+const result = reverse('a')
+expect(result).toBe('a')
+})
+
+test('reverse of react', () => {
+const result = reverse('react')
+
+expect(result).toBe('tcaer')
+})
+
+test('reverse of releveler', () => {
+const result = reverse('releveler')
+
+expect(result).toBe('releveler')
+})
+
+Run
+npm test
+And see if all tests are passed.
+
+## Testing Application Backend
+
+Since the backend does not contain any complicated logic, it doesn't make sense to write unit tests for it. TSince our application's backend is still relatively simple, we will decide to test the entire application through its REST API, so that the database is also included. This kind of testing where multiple components of the system are being tested as a group is called integration testing.
+
+The convention in Node is to define the execution mode of the application with the NODE_ENV environment variable. In our current application, we only load the environment variables defined in the .env file if the application is not in production mode.
+
+It is common practice to define separate modes for development and testing.
+
+We will change the scripts in our package.json so that when tests are run, NODE_ENV gets the value test:
+
+"start": "NODE_ENV=production node index.js",
+"dev": "NODE_ENV=development nodemon index.js",
+"test": "NODE_ENV=test jest --verbose --runInBand"
+
+We also added the runInBand option to the npm script that executes the tests. This option will prevent Jest from running tests in parallel.
+
+There is a slight issue in the way that we have specified the mode of the application in our scripts: it will not work on Windows. We can correct this by installing the cross-env package as a development dependency with the command
+
+npm install --save-dev cross-env
+
+We can then achieve cross-platform compatibility by using the cross-env library in our npm scripts defined in package.json:
+
+"scripts": {
+"start": "cross-env NODE_ENV=production node index.js",
+"dev": "cross-env NODE_ENV=development nodemon index.js",
+// ...
+"test": "cross-env NODE_ENV=test jest --verbose --runInBand",
+},
+
+If you are deploying this application to Fly.io/Render, keep in mind that if cross-env is saved as a development dependency, it would cause an application error on your web server. To fix this, change cross-env to a production dependency by running this in the command line:
+
+npm install cross-env
+
+Now we can modify the way that our application runs in different modes. As an example of this, we could define the application to use a separate test database when it is running tests.
+
+We can create our separate test database in MongoDB Atlas. This is not an optimal solution in situations where many people are developing the same application. Test execution in particular typically requires a single database instance that is not used by tests that are running concurrently.
+
+It would be better to run our tests using a database that is installed and running on the developer's local machine. The optimal solution would be to have every test execution use a separate database. This is "relatively simple" to achieve by running Mongo in-memory or by using Docker containers. However, at present we will continue to use the MongoDB Atlas database.
+
+Let's make some changes to the module that defines the application's configuration:
+
+require('dotenv').config()
+
+const PORT = process.env.PORT
+
+const MONGODB_URI = process.env.NODE_ENV === 'test'
+? process.env.TEST_MONGODB_URI
+: process.env.MONGODB_URI
+
+module.exports = {
+MONGODB_URI,
+PORT
+}
+
+The .env file has separate variables for the database addresses of the development and test databases:
+
+MONGODB_URI=mongodb+srv://fullstack:<password>@cluster0.o1opl.mongodb.net/noteApp?retryWrites=true&w=majority
+PORT=3001
+
+TEST_MONGODB_URI=mongodb+srv://fullstack:<password>@cluster0.o1opl.mongodb.net/testNoteApp?retryWrites=true&w=majorit
+
+### Supertest
+
+use the supertest package to help us write our tests for testing the API.
+
+We will install the package as a development dependency:
+
+npm install --save-dev supertest
+
+Let's write our first test in the tests/note_api.test.js file:
+
+const mongoose = require('mongoose')
+const supertest = require('supertest')
+const app = require('../app')
+
+const api = supertest(app)
+
+test('notes are returned as json', async () => {
+await api
+.get('/api/notes')
+.expect(200)
+.expect('Content-Type', /application\/json/)
+})
+
+afterAll(async () => {
+await mongoose.connection.close()
+})
+
+The test imports the Express application from the app.js module and wraps it with the supertest function into a so-called superagent object. This object is assigned to the api variable and tests can use it for making HTTP requests to the backend.
+
+Our test makes an HTTP GET request to the api/notes url and verifies that the request is responded to with the status code 200. The test also verifies that the Content-Type header is set to application/json, indicating that the data is in the desired format.
+
+Checking the value of the header uses a the syntax:
+
+.expect('Content-Type', /application\/json/)
+
+The desired value is now defined as regular expression or in short regex. The regex starts and ends with a slash /, because the desired string application/json also contains the same slash, it is preceded by a \ so that it is not interpreted as a regex termination character.
+
+For the regex we defined, it is acceptable that the header contains the string in question. The actual value of the header is application/json; charset=utf-8, i.e. it also contains information about character encoding. However, our test is not interested in this and therefore it is better to define the test as a regex instead of an exact string.
+
+Once all the tests (there is currently only one) have finished running we have to close the database connection used by Mongoose. This can be easily achieved with the afterAll method:
+
+afterAll(async () => {
+await mongoose.connection.close()
+})
+
+error you may come across is your test takes longer than the default Jest test timeout of 5000 ms. This can be solved by adding a third parameter to the test function:
+
+test('notes are returned as json', async () => {
+await api
+.get('/api/notes')
+.expect(200)
+.expect('Content-Type', /application\/json/)
+}, 100000)
+
+When running your tests you may also run across the following console warning:
+
+Jest did not exit one second after the test run has completed.
+
+This usually means that there are asynchronous operations that weren't stopped in your tests. Consider running Jest with `--detectOpenHandles` to troubleshoot this issue.
+
+The problem is quite likely caused by the Mongoose version 6.x, the problem does not appear when version 5.x is used. Mongoose documentation does not recommend testing Mongoose applications with Jest.
+
+One way to get rid of this is to add to the directory tests a file teardown.js with the following content:
+
+module.exports = () => {
+process.exit(0)
+}
+and by extending the Jest definitions in the package.json as follows
+
+{
+//...
+"jest": {
+"testEnvironment": "node",
+"globalTeardown": "./tests/teardown.js"
+}
+}
+
+Also we have extracted the Express application into the app.js file, and the role of the index.js file is changed to launch the application at the specified port with Node's built-in http object.
+The tests only use the express application defined in the app.js file:
+
+const mongoose = require('mongoose')
+const supertest = require('supertest')
+const app = require('../app')
+
+const api = supertest(app)
+
+// ...
+
+The documentation for supertest says the following:
+
+if the server is not already listening for connections then it is bound to an ephemeral port for you so there is no need to keep track of ports.
+
+In other words, supertest takes care that the application being tested is started at the port that it uses internally.
+
+We will add two notes to the test database using the mongo.js program (here we must remember to switch to the correct database url), and the following command:
+node mongo.js password
+
+Now we write a few more tests:
+
+test('there are two notes', async () => {
+const response = await api.get('/api/notes')
+
+expect(response.body).toHaveLength(2)
+})
+
+test('the first note is about HTTP methods', async () => {
+const response = await api.get('/api/notes')
+
+expect(response.body[0].content).toBe('HTML is easy')
+})
+
+The middleware that outputs information about the HTTP (logger.js) is obstructing the test execution output. Let us modify the logger so that it does not print to the console in test mode:
+
+const info = (...params) => {
+if (process.env.NODE_ENV !== 'test') {
+console.log(...params)
+}
+}
+
+const error = (...params) => {
+if (process.env.NODE_ENV !== 'test') {
+console.error(...params)
+}
+}
+
+module.exports = {
+info, error
+}
+
+### Initializing the Database Before Tests
+
+Our tests are bad as they are dependent on the state of the database, that now happens to have two notes. To make our tests more robust, we have to reset the database and generate the needed test data in a controlled manner before we run the tests.
+
+Our tests are already using the afterAll function of Jest to close the connection to the database after the tests are finished executing. Jest offers many other functions that can be used for executing operations once before any test is run or every time before a test is run.
+
+Let's initialize the database before every test with the beforeEach function by modifying the note_api.test.js file as under:
+
+const mongoose = require('mongoose')
+const supertest = require('supertest')
+const app = require('../app')
+const api = supertest(app)
+const Note = require('../models/note')
+
+const initialNotes = [
+{
+content: 'HTML is easy',
+important: false,
+},
+{
+content: 'CSS is hard',
+important: true,
+},
+]
+
+beforeEach(async () => {
+await Note.deleteMany({})
+let noteObject = new Note(initialNotes[0])
+await noteObject.save()
+noteObject = new Note(initialNotes[1])
+await noteObject.save()
+})
+// ...
+
+The database is cleared out at the beginning, and after that, we save the two notes stored in the initialNotes array to the database. By doing this, we ensure that the database is in the same state before every test is run.
+
+Let's also make the following changes to the last two tests:
+
+test('all notes are returned', async () => {
+const response = await api.get('/api/notes')
+
+expect(response.body).toHaveLength(initialNotes.length)
+})
+
+test('a specific note is within the returned notes', async () => {
+const response = await api.get('/api/notes')
+
+const contents = response.body.map(r => r.content)
+expect(contents).toContain(
+'CSS is hard'
+)
+})
+
+Pay special attention to the expect in the latter test. The response.body.map(r => r.content)command is used to create an array containing the content of every note returned by the API. The toContain method is used for checking that the note given to it as a parameter is in the list of notes returned by the API.
+
+### Running Tests One by One
+
+The npm test command executes all of the tests for the application. When we are writing tests, it is usually wise to only execute one or two tests. Jest offers a few different ways of accomplishing this, one of which is the only method. If tests are written across many files, this method is not great.
+
+A better option is to specify the tests that need to be run as parameters of the npm test command.
+
+The following command only runs the tests found in the tests/note_api.test.js file:
+
+npm test -- tests/note_api.test.js
+The -t option can be used for running tests with a specific name:
+
+npm test -- -t "a specific note is within the returned notes"
+The provided parameter can refer to the name of the test or the describe block. The parameter can also contain just a part of the name. The following command will run all of the tests that contain notes in their name:
+
+npm test -- -t 'notes'
+NB: When running a single test, the mongoose connection might stay open if no tests using the connection are run. The problem might be because supertest primes the connection, but Jest does not run the afterAll portion of the code.
+
+### Async/Await in the Backend
+
+Let's start to change the backend to async and await. As all of the asynchronous operations are currently done inside of a function, it is enough to change the route handler functions into async functions.
+
+the router.js file is changed to following:
+
+/_ eslint-disable indent _/
+/_ eslint-disable linebreak-style _/
+const notesRouter = require('express').Router()
+const Note = require('../models/note')
+
+// Fetching all notes
+notesRouter.get('/', async (req, res) => {
+const notes = await Note.find({})
+res.json(notes)
+})
+
+// Fetching one note by id
+notesRouter.get('/:id', async (req, res, next) => {
+const note = await Note.findByID(req.params.id)
+if(note) {
+res.json(note)
+} else {
+res.status(404).json({
+error: 'note note found'
+}).end()
+}
+})
+
+// Creating a new note
+notesRouter.post('/', async(req, res, next) => {
+const body = req.body
+
+if (body.content === undefined) {
+return res.status(400).json({
+error: 'content missing'
+})
+}
+
+const note = new Note({
+content: body.content,
+important: body.important || false,
+date: new Date(),
+})
+
+const savedNote = await note.save()
+res.status(201).json(savedNote)
+
+})
+
+// Toggling Importance of a Note
+notesRouter.put('/:id', async (req, res, next) => {
+const { content, important } = req.body
+
+const updatedNote = await Note.findByIdAndUpdate(req.params.id,
+{ content, important },
+{ new: true, runValidators: true }
+)
+res.json(updatedNote)
+})
+
+// Deleting a note
+notesRouter.delete('/:id', async (req, res, next) => {
+await Note.findByIdAndRemove(req.params.id)
+res.status(204).end()
+})
+
+module.exports = notesRouter
+
+We can verify that our refactoring was successful by testing the endpoints through the browser and by running the tests that we wrote earlier.
+
+However, we had to remove all the "catch" blocks because the "then" operator for returning the "promise" has been removed. We can add a try-catch block to all routes in order to resolve the problem if an "exception" occurs but that would make the code unnecessarily lengthy and unwieldy, for example:
+
+notesRouter.post('/', async (request, response, next) => {
+const body = request.body
+
+const note = new Note({
+content: body.content,
+important: body.important || false,
+})
+try {
+const savedNote = await note.save()
+response.status(201).json(savedNote)
+} catch(exception) {
+next(exception)
+}
+})
+
+We can remove the try-catch block by using the express-async-errors library
+
+npm install express-async-errors
+
+Using the library is very easy. You introduce the library in app.js:
+
+const config = require('./utils/config')
+const express = require('express')
+require('express-async-errors')
+const app = express()
+const cors = require('cors')
+const notesRouter = require('./controllers/notes')
+const middleware = require('./utils/middleware')
+const logger = require('./utils/logger')
+const mongoose = require('mongoose')
+
+// ...
+
+module.exports = app
+
+The 'magic' of the library allows us to eliminate the try-catch blocks completely. For example the route for deleting a note
+
+notesRouter.delete('/:id', async (request, response, next) => {
+try {
+await Note.findByIdAndRemove(request.params.id)
+response.status(204).end()
+} catch (exception) {
+next(exception)
+}
+})
+
+becomes
+
+notesRouter.delete('/:id', async (request, response) => {
+await Note.findByIdAndRemove(request.params.id)
+response.status(204).end()
+})
+
+Because of the library, we do not need the next(exception) call anymore. The library handles everything under the hood. If an exception occurs in an async route, the execution is automatically passed to the error handling middleware.
+
+Run tests once again to ensure that the app works as intended. 
+npm test
+
+## User Administration
+
+We want to add user authentication and authorization to our application. Users should be stored in the database and every note should be linked to the user who created it. Deleting and editing a note should only be allowed for the user who created it.
+
